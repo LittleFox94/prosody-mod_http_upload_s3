@@ -71,6 +71,11 @@ http_upload_s3_path  = "http_uploads";
 -- A maximum file size can be set by:
 --  default: 100MB (100\*1024\*1024)
 http_upload_s3_file_size_limit = 123 -- bytes
+
+-- You can also use any other S3-compatible service, at least if it is
+-- accessible via HTTPS on the default port 443 and does not need a path prefix
+-- before the bucket (oh and this module always does path-style bucket)
+--http_upload_s3_host = "my-s3-service.net"
 ```
 
 

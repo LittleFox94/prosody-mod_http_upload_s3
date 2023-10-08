@@ -15,9 +15,11 @@ local HMAC = require "util.hashes".hmac_sha256;
 local SHA256 = require "util.hashes".sha256;
 
 -- config
+local aws_service = "s3";
+
 local file_size_limit = module:get_option_number(module.name .. "_file_size_limit", 100 * 1024 * 1024); -- 100 MB
 local aws_region = assert(module:get_option_string(module.name .. "_region"),
-	module.name .. "_region is a required option");
+    module.name .. "_region is a required option");
 local aws_bucket = assert(module:get_option_string(module.name .. "_bucket"),
 	module.name .. "_bucket is a required option");
 local aws_path = assert(module:get_option_string(module.name .. "_path"),
@@ -30,8 +32,10 @@ local aws_creds = {
 	access_key = aws_access_id;
 	secret_key = aws_secret_key;
 }
-local aws_service = "s3";
-
+local host = module:get_option_string(
+    module.name .. "_host",
+    string.format("%s-%s.amazonaws.com", aws_service, aws_region)
+);
 
 -- depends
 module:depends("disco");
@@ -111,7 +115,7 @@ local function get_credential(keys, timestamp, region, service)
 	return keys["access_key"] .. "/" .. get_cred_scope(timestamp, region, service)
 end
 
-local function get_canonical_query_string(timestamp, host, credential, request_method)
+local function get_canonical_query_string(timestamp, credential, request_method)
 	local query_params = {
 		["X-Amz-Acl"]           = "public-read";
 		["X-Amz-Algorithm"]     = "AWS4-HMAC-SHA256";
@@ -132,9 +136,9 @@ local function get_canonical_query_string(timestamp, host, credential, request_m
 	return table.concat(qs_list, "&")
 end
 
-local function get_hashed_canonical_request(timestamp, host, uri, request_method, credential, size, mime)
+local function get_hashed_canonical_request(timestamp, uri, request_method, credential, size, mime)
 	local unsigned_payload = "UNSIGNED-PAYLOAD"
-	local canonical_query_string = get_canonical_query_string(timestamp, host, credential, request_method)
+	local canonical_query_string = get_canonical_query_string(timestamp, credential, request_method)
 	local canonical_request = request_method .. "\n"
 		.. uri .. "\n"
 		.. canonical_query_string .. "\n"
@@ -147,18 +151,18 @@ local function get_hashed_canonical_request(timestamp, host, uri, request_method
 	return SHA256(canonical_request, true)
 end
 
-local function get_string_to_sign(timestamp, region, service, host, uri, request_method, credential, size, mime)
+local function get_string_to_sign(timestamp, region, service, uri, request_method, credential, size, mime)
 	return "AWS4-HMAC-SHA256\n"
 		.. get_iso8601_basic(timestamp) .. "\n"
 		.. get_cred_scope(timestamp, region, service) .. "\n"
-		.. get_hashed_canonical_request(timestamp, host, uri, request_method, credential, size, mime)
+		.. get_hashed_canonical_request(timestamp, uri, request_method, credential, size, mime)
 end
 
 local function get_signature(derived_signing_key, string_to_sign)
 	return HMAC(derived_signing_key, string_to_sign, true)
 end
 
-local function build_uri(host, uri, query_string)
+local function build_uri(uri, query_string)
 	local url = string.format("https://%s%s", host, uri)
 	if query_string ~= nil then
 		url = url .. "?" .. query_string
@@ -166,34 +170,28 @@ local function build_uri(host, uri, query_string)
 	return url
 end
 
-local function build_signed_url(keys, timestamp, region, service, host, uri, request_method, size, mime)
+local function build_signed_url(keys, timestamp, region, service, uri, request_method, size, mime)
 	-- we are using AWS Signature V 4 with query parameters instead of headers
 	-- ref: https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
 	local derived_signing_key = get_derived_signing_key(keys, timestamp, region, service)
 	local credential          = get_credential(keys, timestamp, region, service)
-	local string_to_sign      = get_string_to_sign(timestamp, region, service, host, uri, request_method, credential, size, mime)
+	local string_to_sign      = get_string_to_sign(timestamp, region, service, uri, request_method, credential, size, mime)
 	local signature           = get_signature(derived_signing_key, string_to_sign)
-	local query_string        = get_canonical_query_string(timestamp, host, credential, request_method)
+	local query_string        = get_canonical_query_string(timestamp, credential, request_method)
 	local signed_query_string = query_string .. "&X-Amz-Signature=" .. signature
-	local url                 = build_uri(host, uri, signed_query_string)
+	local url                 = build_uri(uri, signed_query_string)
 	return url
-end
-
-local function build_host(service, region)
-	return string.format("%s-%s.amazonaws.com", service, region)
 end
 
 local function get_public_get(service, region, uri)
 	local timestamp = tonumber(os.time())
-	local host      = build_host(service, region)
-	local url       = build_uri(host, uri, nil)
+	local url       = build_uri(uri, nil)
 	return url
 end
 
 local function get_presigned_put(credentials, service, region, uri, size, mime)
 	local timestamp = tonumber(os.time())
-	local host      = build_host(service, region)
-	local url       = build_signed_url(credentials, timestamp, region, service, host, uri, "PUT", size, mime)
+	local url       = build_signed_url(credentials, timestamp, region, service, uri, "PUT", size, mime)
 	return url
 end
 
