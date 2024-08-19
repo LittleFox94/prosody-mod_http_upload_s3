@@ -197,7 +197,7 @@ end
 
 local function handle_request(origin, stanza, xmlns, filename, filesize, filetype)
 	-- local clients only
-	if origin.type ~= "c2s" then
+	if origin.type ~= "c2s" and origin.type ~= "component" then
 		module:log("debug", "Request for upload slot from a %s", origin.type);
 		origin.send(st.error_reply(stanza, "cancel", "not-authorized"));
 		return nil, nil;
